@@ -63,7 +63,7 @@ private:
 
 
 
-extern WindowsSerial Serial;
+extern WindowsSerial mySerial;
 extern WindowsSerial Serial1;
 extern WindowsSerial Serial2;
 extern WindowsSerial Serial3;

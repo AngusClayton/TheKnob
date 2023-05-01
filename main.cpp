@@ -1,7 +1,9 @@
 #include <iostream>
-#include <String>
+#include <string>
 #include <fstream> 
-
+#include<chrono>
+#include <vector>
+#include <sstream>
 
 #ifndef ARDSERIAL
 #include "ArduSerial.h"
@@ -9,7 +11,8 @@
 #endif
 
 #define knob_increment 5
-WindowsSerial Serial(11);
+WindowsSerial mySerial(11); 
+
 int applicationNumber = 0;
 
 struct application
@@ -21,10 +24,51 @@ struct application
     int green;
     int blue;
     boolean sys = false;
-} all, spotify, discord;
+};
 
-//application spotify;
-application myApps[3];
+std::vector<application> myApps;
+
+
+//preconditions none:
+//postconditions: scanns all serial ports until it find the knob. does this with a handshake
+void setPort()
+{
+    for (int i = 0; i < 100; i++)
+    {
+        mySerial.setPort(i);
+        mySerial.begin(115200);
+        /*
+        for (int i=0;i<40;i++)
+        {
+            if (mySerial.connected()) {break;}
+            Sleep(100);
+        }*/
+        if (mySerial.connected()) 
+        {
+            std::cout << "found " << i <<std::endl; 
+            mySerial.print("KNOB_HANDSHAKE");
+            //wait for available
+            std::chrono::time_point start = std::chrono::steady_clock::now();
+            while (mySerial.available() == 0) 
+            {
+                mySerial.print("KNOB_HANDSHAKE");
+                if(std::chrono::steady_clock::now() - start > std::chrono::seconds(4)) break;
+                Sleep(100);
+             
+            }
+            char buffer[14];
+            mySerial.read(buffer, 14);
+            std::cout << buffer << std::endl;    
+            if (buffer[0] == 'K' && buffer[1] == 'N') break; //if buffer == "KNOBAVAILABLE" then break out of loop.
+            
+            
+
+        }
+        mySerial.end();
+        
+    }
+    
+}
 
 
 std::string getLedSeq(int r, int g, int b, int l)
@@ -44,7 +88,8 @@ std::string getLedSeq(application *myApp) /*int r, int g, int b, int l*/
     //int l = myApp->level*12.0/100;
     sprintf(buffer,"%03d %03d %03d %03d",myApp->red,myApp->green,myApp->blue,myApp->level);
     std::string output(buffer);
-    std::cout << output << std::endl;
+    output += " " + myApp->name;
+    //std::cout << output << std::endl;
 
     return output;
 }
@@ -69,50 +114,48 @@ void setVolume(application *myApp)
     //std::cout << command << std::endl;
 }
 
-
-
-
-
 void setup()
 {
     //read files;
 
-
+    //setPort();
     //=========================== Determine Com Ports --------------------
     //std::cout << "Port: " << findComPort();
-    
+    //mySerial(11);
 
 
 	// Serial11 means access Arduino on COM27 ***************
-	Serial.begin(115200);
+	mySerial.setPort(11);
+    mySerial.begin(115200);
 
 	std::cout << "Starting..." << std::endl;
 
-	while (!Serial);
+	while (!mySerial);
 
-	while (Serial.available())
-		Serial.read();
+	while (mySerial.available())
+		mySerial.read();
 
     Sleep(4000);
 	std::cout << "Connected" << std::endl;
 
-    Serial.print(getLedSeq(0,255,0,12));
+    mySerial.print(getLedSeq(0,255,0,12));
     Sleep(250);
     for (int i = 100; i >=0; i-=20 )
     {
-        Serial.print(getLedSeq(0,255,0,i));
+        mySerial.print(getLedSeq(0,255,0,i));
         Sleep(100);
     }
-    Serial.print(getLedSeq(50,50,50,100));
+    mySerial.print(getLedSeq(50,50,50,100));
     Sleep(100);
     std::cout << "Standby" << std::endl;
 }
 
 void loop()
 {
-    while (Serial.available())
+    while (mySerial.available())
     {
-        char byte = Serial.read();
+        char byte = mySerial.read();
+       // std::cout << "B:" << byte << std::endl;
         if (byte == '1') //vol up
         {
             application *myApp = &myApps[applicationNumber];
@@ -120,7 +163,7 @@ void loop()
             {
             myApp->level += knob_increment;
             setVolume(myApp);
-            Serial.print(getLedSeq(myApp));
+            mySerial.print(getLedSeq(myApp));
             }
 
         }
@@ -131,16 +174,17 @@ void loop()
             {
             myApp->level -= knob_increment;
             setVolume(myApp);
-            Serial.print(getLedSeq(myApp));
+            mySerial.print(getLedSeq(myApp));
             }
 
         }
 
         if (byte == '2') //change app
         {
-            applicationNumber = 1-applicationNumber;
+            if (applicationNumber < myApps.size()-1) {applicationNumber += 1;}
+            else {applicationNumber =0;}
             application *myApp = &myApps[applicationNumber];
-            Serial.print(getLedSeq(myApp));
+            mySerial.print(getLedSeq(myApp));
             
 
         }
@@ -150,10 +194,46 @@ void loop()
 }
 
 
+//preconditoins: none
+//postconditoins: loads config file into application array struct
+void setupApps()
+{
+    std::cout << "setting up apps" << std::endl;
+    std::fstream configFile;
+    configFile.open("application.conf",std::ios::in);
+    if (configFile.is_open())
+    {
+        std::string tp;
+        while (getline(configFile, tp))
+        {
+            //std::cout << tp << std::endl;
+            
+            std::vector<std::string> substrings;
+            std::stringstream ss(tp);
+            std::string substring;
+            while (std::getline(ss, substring, ',')) 
+            {
+                substrings.push_back(substring);
+            }
+
+            application newApp;
+            newApp.name = substrings[0];
+            newApp.red = stoi(substrings[1]);
+            newApp.green = stoi(substrings[2]);
+            newApp.blue = stoi(substrings[3]);
+            newApp.bgName = substrings[4];
+            myApps.push_back(newApp);
+
+            
+        }
+
+    }
+     std::cout << "apps Loaded" << std::endl;
+}
 
 int main()
 {
-    
+    /*
     spotify.name = "spotify";
     spotify.bgName = "spotify.exe";
     spotify.level = 0;
@@ -164,16 +244,22 @@ int main()
     discord.level = 0;
     discord.red = 255; discord.green = 0; discord.blue = 255;
 
-    all.name = "system";
-    all.level = 0;
-    all.red = 255; all.green = 255; all.blue = 255;
-    all.sys = true;
+    
 
     myApps[0] = all;
     myApps[1] = spotify;
     myApps[2] = discord;
+    */
 
 	setup();
+    setupApps();
+    //add system
+    application all;
+    all.name = "system";
+    all.level = 0;
+    all.red = 255; all.green = 255; all.blue = 255;
+    all.sys = true;
+    myApps.push_back(all);
     
 
 	while (true)
